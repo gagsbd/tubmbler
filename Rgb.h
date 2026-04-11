@@ -44,13 +44,13 @@ public:
       {
         return true;
       }
-      if (motion_mode == STOP && balance_angle_min <= kalmanfilter_angle && kalmanfilter_angle <= balance_angle_max)
-      {
-        motion_mode = STANDBY;
-        lightOff();
-        function_mode = IDLE;
-        return true;
-      }
+      // if (motion_mode == STOP && balance_angle_min <= kalmanfilter_angle && kalmanfilter_angle <= balance_angle_max)
+      // {
+      //   motion_mode = STANDBY;
+      //   lightOff();
+      //   function_mode = IDLE;
+      //   return true;
+      // }
     }
     return false;
   }

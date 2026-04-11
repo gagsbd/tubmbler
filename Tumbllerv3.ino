@@ -35,7 +35,7 @@ int right_turn_correction = 4;
 //int block_width = 500;
 
 #define MAX_COMMANDS    60
-#define ENCODER_COUNTS_90_DEG   1602
+#define ENCODER_COUNTS_90_DEG   266
 #define ENC_PER_MM  0.25   // Calibrated: ~13665 counts for 500mm → ~27 counts/mm
 unsigned long usLast;
 unsigned long startTime =0;
@@ -377,33 +377,35 @@ void setMotionState()
     setting_turn_speed = 0;
     break;
   case STOP:
-    if (millis() - start_prev_time > 1000)
-    {
-      function_mode = IDLE;
-      if (balance_angle_min <= kalmanfilter_angle && kalmanfilter_angle <= balance_angle_max)
-      {
-        motion_mode = STANDBY;
-        rgb.lightOff();
-      }
-    }
+    // Disabled: Balance check since hardware handles balancing
+    // if (millis() - start_prev_time > 1000)
+    // {
+    //   function_mode = IDLE;
+    //   if (balance_angle_min <= kalmanfilter_angle && kalmanfilter_angle <= balance_angle_max)
+    //   {
+    //     motion_mode = STANDBY;
+    //     rgb.lightOff();
+    //   }
+    // }
     break;
   case START:
-    if (millis() - start_prev_time > 2000)
-    {
-      if (balance_angle_min <= kalmanfilter_angle && kalmanfilter_angle <= balance_angle_max)
-      {
-        car_speed_integeral = 0;
-        setting_car_speed = 0;
-        motion_mode = STANDBY;
-        rgb.lightOff();
-      }
-      else
-      {
-        motion_mode = STOP;
-        carStop();
-        rgb.brightRedColor();
-      }
-    }
+    // Disabled: Balance check since hardware handles balancing
+    // if (millis() - start_prev_time > 2000)
+    // {
+    //   if (balance_angle_min <= kalmanfilter_angle && kalmanfilter_angle <= balance_angle_max)
+    //   {
+    //     car_speed_integeral = 0;
+    //     setting_car_speed = 0;
+    //     motion_mode = STANDBY;
+    //     rgb.lightOff();
+    //   }
+    //   else
+    //   {
+    //     motion_mode = STOP;
+    //     carStop();
+    //     rgb.brightRedColor();
+    //   }
+    // }
     break;
   default:
     break;
@@ -490,21 +492,23 @@ void keyEventHandle()
       }
       break;
     case '4':
-      function_mode = IDLE;
-      motion_mode = STOP;
-      carBack(110);
-      delay((kalmanfilter_angle - 30) * (kalmanfilter_angle - 30) / 8);
-      carStop();
-      start_prev_time = millis();
-      rgb.brightRedColor();
+      // Disabled: Balance reset since hardware handles balancing
+      // function_mode = IDLE;
+      // motion_mode = STOP;
+      // carBack(110);
+      // delay((kalmanfilter_angle - 30) * (kalmanfilter_angle - 30) / 8);
+      // carStop();
+      // start_prev_time = millis();
+      // rgb.brightRedColor();
       break;
     case '5':
-      if (millis() - start_prev_time > 500 && kalmanfilter_angle >= balance_angle_min)
-      {
-        start_prev_time = millis();
-        motion_mode = START;
-      }
-      motion_mode = START;
+      // Disabled: Balance check since hardware handles balancing
+      // if (millis() - start_prev_time > 500 && kalmanfilter_angle >= balance_angle_min)
+      // {
+      //   start_prev_time = millis();
+      //   motion_mode = START;
+      // }
+      // motion_mode = START;
       break;
     case '6':
       rgb.brightness = 50;
@@ -664,7 +668,7 @@ void loop()
     case VEHICLE_FORWARD :
       drive(1,newCmd);
       if (hasStopped) {
-       
+        delay(1000);  // Pause to allow balance stabilization before next command
         cmdQueue.next();
       }
       break;
@@ -682,11 +686,7 @@ void loop()
       in_reverse = true;
        drive(-1,newCmd);
       if (hasStopped) {
-        // setMotorOutputs();
-        
-        // mtrRight.stop();
-        // mtrLeft.stop();
-        // setMotorOutputs();
+        delay(1000);  // Pause to allow balance stabilization
         cmdQueue.next();
       }
       break;
@@ -697,11 +697,10 @@ void loop()
         encoder_target = distance;
         turnRight();
       }
-      //turn(-106,newCmd);
-      
       if (hasStopped) {
         //setMotorOutputs();
         Serial.println("Turn completed.");
+        delay(1000);  // Pause to allow balance stabilization
         cmdQueue.next();
       }      
       break;
@@ -709,20 +708,18 @@ void loop()
       //turn(-180,newCmd);
       if (hasStopped) {
        // setMotorOutputs();
+       delay(1000);  // Pause to allow balance stabilization
         cmdQueue.next();
       }      
       break;
     case VEHICLE_TURN_LEFT :
      if (newCmd) {
-        distance = ENCODER_COUNTS_90_DEG;
-        speed = speedTurn;
-        encoder_target = distance;
-        turnLeft();
+        carForwardTrapezoidal(-ENCODER_COUNTS_90_DEG, ENCODER_COUNTS_90_DEG, speedTurn);
       }
       
-      //turn(118,newCmd);
       if (hasStopped) {
         //setMotorOutputs();
+        delay(1000);  // Pause to allow balance stabilization
         cmdQueue.next();
       }      
       break;
@@ -746,7 +743,8 @@ void loop()
       if (newCmd) {
        // mtrLeft.stop();
        // mtrRight.stop();
-       carStop();
+       cmdQueue.clear();
+       //carStop();
         //setMotorOutputs();
       }
       flagTimeRun = 0;
@@ -832,6 +830,10 @@ void drive(int direction, int newCmd) //1=fwd -1=rev
         // adjust_target(direction * block_width);
       }else
       {
+        if(hasStopped)
+        {
+          cmdQueue.next();
+        }
 
         // if(usecElapsed < 1000)
         // {
@@ -879,16 +881,11 @@ void drive(int direction, int newCmd) //1=fwd -1=rev
 
             float correction = (Kp * error + Ki * integral + Kd * derivative)*direction;
 
-          
-
             int leftSpeed = baseSpeed + correction;
             int rightSpeed = baseSpeed - correction;
-
            
             leftSpeed = constrain(leftSpeed, 200, 255);
             rightSpeed = constrain(rightSpeed, 200, 255); //150,200
-
-           
             //moveForward(leftSpeed, rightSpeed);
             // analogWrite(PIN_MTR2_PWM,csr.getSpeed(rightSpeed));
             // analogWrite(PIN_MTR1_PWM,csl.getSpeed(leftSpeed));

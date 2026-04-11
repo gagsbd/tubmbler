@@ -16,9 +16,8 @@
 MPU6050 mpu;
 KalmanFilter kalmanfilter;
 
-//Setting PID parameters
-
-double kp_balance = 55, kd_balance = 0.75;
+// Disabled: Balance PID parameters since hardware handles balancing
+// double kp_balance = 55, kd_balance = 0.75;
 double kp_speed = 10, ki_speed = 0.26;
 double kp_turn = 2.5, kd_turn = 0.5;
 
@@ -43,11 +42,9 @@ int setting_car_speed = 0;
 int setting_turn_speed = 0;
 double pwm_left = 0;
 double pwm_right = 0;
-float kalmanfilter_angle;
-// char balance_angle_min = -27;
-// char balance_angle_max = 27;
-char balance_angle_min = -22;
-char balance_angle_max = 22;
+// Disabled: Balance angle limits since hardware handles balancing
+// char balance_angle_min = -22;
+// char balance_angle_max = 22;
 
 
 // **** new vars
@@ -156,7 +153,7 @@ void carForwardTrapezoidal(long leftDist, long rightDist, int maxSpeed)
     unsigned long tAccelEnd  = tAccel  * 1e6;
     unsigned long tCruiseEnd = tAccelEnd + tCruise * 1e6;
     unsigned long tDecelEnd  = tCruiseEnd + tDecel * 1e6;
-    unsigned long tCoastEnd  = tDecelEnd + 500000;  // 500ms coast-down to ~0 at end
+    unsigned long tCoastEnd  = tDecelEnd + 1000000;  // 1s coast-down to 0 at end
 
     // -----------------------------
     // 3. Reset encoder counters & yaw tracking
@@ -189,7 +186,8 @@ void carForwardTrapezoidal(long leftDist, long rightDist, int maxSpeed)
 
         // Phase selection
         if (t < tAccelEnd) {
-            speedCmd = accelRate * (t / 1e6f);
+            float tNorm = (t / 1e6f) / tAccel;
+            speedCmd = maxSpeed * (tNorm * tNorm);  // Quadratic acceleration for smoother start
         }
         else if (t < tCruiseEnd) {
             speedCmd = maxSpeed;
@@ -199,11 +197,11 @@ void carForwardTrapezoidal(long leftDist, long rightDist, int maxSpeed)
             speedCmd = maxSpeed - (decelRate / 2.5f) * td;
         }
         else if (t < tCoastEnd) {
-            // Coast phase: very gradual ramp to near-zero
-            // Maintains balance by keeping motors running at minimal speed
+            // Coast phase: gradual linear ramp to zero
+            // Maintains balance by keeping motors running at low speed
             float tCoast = (t - tDecelEnd) / 1e6f;
-            speedCmd = maxSpeed * (1.0f - (tCoast * tCoast) / 0.25f);  // Smooth quadratic decay
-            speedCmd = constrain(speedCmd, 5, maxSpeed);  // Minimum 5 to maintain balance control
+            speedCmd = maxSpeed * (1.0f - tCoast / 1.0f);  // Linear decay over 1s
+            speedCmd = constrain(speedCmd, 0, maxSpeed);
         }
         else {
             speedCmd = 0;
@@ -263,11 +261,11 @@ void carForwardTrapezoidal(long leftDist, long rightDist, int maxSpeed)
     }
 
     // -----------------------------
-    // 6. Stop motors - now transition to balanceCar() control
-    // Stop by coasting to zero output instead of using an abrupt brake pulse
+    // 6. Transition to balance control smoothly
+    // Set small speed to maintain balance without abrupt change
     // -----------------------------
-    analogWrite(PWMA_LEFT, 0);
-    analogWrite(PWMB_RIGHT, 0);
+    // analogWrite(PWMA_LEFT, 0);
+    // analogWrite(PWMB_RIGHT, 0);
     
     // Debug: Show actual encoder counts
     extern float yaw;
@@ -279,9 +277,9 @@ void carForwardTrapezoidal(long leftDist, long rightDist, int maxSpeed)
     Serial.println(yaw);
     
     // Reset motion control variables so balance loop takes over
-    setting_car_speed = 0;
+    setting_car_speed = 5;  // Small positive speed to gently maintain balance
     setting_turn_speed = 0;
-    car_speed_integeral = 0;
+    // car_speed_integeral = 0;  // Keep integral to prevent PID spike
     isTrapezoidalMotion = false;  // Allow updateStatus() to work again
 
     hasStopped = true;
@@ -341,13 +339,13 @@ void balanceCar()
   }
   mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
   kalmanfilter.Angle(ax, ay, az, gx, gy, gz, dt, Q_angle, Q_gyro, R_angle, C_0, K1);
-  kalmanfilter_angle = kalmanfilter.angle;
+  //kalmanfilter_angle = kalmanfilter.angle;
   
   // Integrate gyro Z-axis to track heading (yaw)
   extern float yaw;
   yaw += kalmanfilter.Gyro_z * dt;  // dt = 0.005 seconds (5ms)
   
-  double balance_control_output = kp_balance * (kalmanfilter_angle - angle_zero) + kd_balance * (kalmanfilter.Gyro_x - angular_velocity_zero);
+  double balance_control_output = 0; // Disabled: kp_balance * (kalmanfilter_angle - angle_zero) + kd_balance * (kalmanfilter.Gyro_x - angular_velocity_zero);
 
   speed_control_period_count++; 
   if (speed_control_period_count >= 8)
@@ -370,17 +368,18 @@ void balanceCar()
     rotation_control_output = setting_turn_speed + kd_turn * kalmanfilter.Gyro_z;
   }
 
-  pwm_left = balance_control_output - speed_control_output - rotation_control_output;
-  pwm_right = balance_control_output - speed_control_output + rotation_control_output;
+  pwm_left = - speed_control_output - rotation_control_output;
+  pwm_right = - speed_control_output + rotation_control_output;
 
   pwm_left = constrain(pwm_left, -255, 255);
   pwm_right = constrain(pwm_right, -255, 255);
-  if (motion_mode != START && motion_mode != STOP && (kalmanfilter_angle < balance_angle_min || balance_angle_max < kalmanfilter_angle))
-  {
-    motion_mode = STOP;
-    Serial.println("Balance 1");
-    carStop();
-  }
+  // Disabled: Balance angle checks since hardware handles balancing
+  // if (motion_mode != START && motion_mode != STOP && (kalmanfilter_angle < balance_angle_min || balance_angle_max < kalmanfilter_angle))
+  // {
+  //   motion_mode = STOP;
+  //   Serial.println("Balance 1");
+  //   carStop();
+  // }
 
   if (motion_mode == STOP && key_flag != '4')
   {
