@@ -27,6 +27,7 @@
 #include <LiquidCrystal_I2C.h>    // this library is needed for the 20x4 display
 #include <MPU6050_tockn.h>
 #include <CalibratedSpeed.h>
+#include "Pins.h"
 
 #define LeftMinSpeed 24
 #define RightMinSpeed 24
@@ -59,18 +60,16 @@ CalibratedSpeed csr = CalibratedSpeed(RightMinSpeed, RightMaxSpeed);
 // #define PIN_SONIC_TRIGGER     12
 // #define PIN_LED               13
 
-#define PIN_MTR1_ENCA          2
-#define PIN_MTR2_ENCA          4
-#define PIN_PB_START           10
-#define PIN_MTR1_DIR_FWD       7
-#define PIN_MTR1_DIR_REV       0
-#define PIN_MTR2_DIR_FWD       12
-#define PIN_MTR2_DIR_REV       0
-#define PIN_MTR1_PWM           5
-#define PIN_MTR2_PWM           6
-#define PIN_SONIC_PULSE        A3
-#define PIN_SONIC_TRIGGER      11
-#define PIN_LED                13
+#define PIN_MTR1_ENCA ENCODER_LEFT_A_PIN
+#define PIN_MTR2_ENCA ENCODER_RIGHT_A_PIN
+#define PIN_PB_START KEY_MODE
+#define PIN_MTR1_DIR AIN1
+#define PIN_MTR2_DIR BIN1
+#define PIN_MTR1_PWM PWMA_LEFT
+#define PIN_MTR2_PWM PWMB_RIGHT
+#define PIN_SONIC_TRIGGER TRIG_PIN
+#define PIN_SONIC_PULSE ECHO_PIN
+#define PIN_LED 13
 
 
 
@@ -103,7 +102,7 @@ long timerusScan;
 int scanCount;
 
 long timerRunTime;
-int speedFwd = 200;
+int speedFwd = 10;
 int speedTurn;
 int flagTimeRun;
 int flagLastMoveFwd;
@@ -123,6 +122,7 @@ unsigned long timerPBStartOn;
 unsigned long timerPBStartOff;
 
 unsigned long timerDelay;
+volatile uint8_t lastEncoderPins;
 
 #define MAX_COMMANDS    60        // Maximum number of motion commands allowed
 
@@ -210,7 +210,7 @@ Command cmdQueue;
 //======================================================================================
 float x_target = 1000.0;
 float y_target = 750.0;
-float block_width = 0.9;
+float block_width = 1.0;
 int current_direction = 1;  //1 = +y, 2 =+x, 3 = -y, 4 = -x
 
 void loadCommandQueue() {
@@ -234,19 +234,19 @@ void loadCommandQueue() {
      //cmdQueue.add(VEHICLE_TURN_LEFT);
       // cmdQueue.add(VEHICLE_TURN_RIGHT);
      //first move from start point, add 0.3 estra so that the subsequest distances are mesured at ctr point of wheel axle
-      cmdQueue.add(VEHICLE_FORWARD,825);
-      cmdQueue.add(VEHICLE_TURN_RIGHT);
-
-      cmdQueue.add(VEHICLE_FORWARD,500);
-      cmdQueue.add(VEHICLE_TURN_LEFT);
-
-      cmdQueue.add(VEHICLE_FORWARD,500);
-      cmdQueue.add(VEHICLE_TURN_LEFT);
-
       cmdQueue.add(VEHICLE_FORWARD,500);
       cmdQueue.add(VEHICLE_TURN_RIGHT);
 
-      cmdQueue.add(VEHICLE_FORWARD,485);
+      // cmdQueue.add(VEHICLE_FORWARD,500);
+      // cmdQueue.add(VEHICLE_TURN_LEFT);
+
+      // cmdQueue.add(VEHICLE_FORWARD,500);
+      // cmdQueue.add(VEHICLE_TURN_LEFT);
+
+      // cmdQueue.add(VEHICLE_FORWARD,500);
+      // cmdQueue.add(VEHICLE_TURN_RIGHT);
+
+      // cmdQueue.add(VEHICLE_FORWARD,485);
 
        //subtract .15 = 75 mm from last
 
@@ -550,28 +550,34 @@ void encoderIntRight()  {
   
 }
 
+void setupEncoderInterrupts() {
+  lastEncoderPins = PIND;
+  PCICR |= _BV(PCIE2);            // enable pin-change interrupts for port D
+  PCMSK2 |= _BV(PCINT18);         // PD2 / digital pin 2
+  PCMSK2 |= _BV(PCINT20);         // PD4 / digital pin 4
+}
+
+ISR(PCINT2_vect) {
+  uint8_t newPins = PIND;
+  uint8_t changed = newPins ^ lastEncoderPins;
+
+  if (changed & _BV(PD2)) {
+    if (newPins & _BV(PD2)) encoderIntLeft();
+  }
+  if (changed & _BV(PD4)) {
+    if (newPins & _BV(PD4)) encoderIntRight();
+  }
+
+  lastEncoderPins = newPins;
+}
 
 //---------------------------------------------------------------------------------------
 void setMotorOutputs() {
-  if (mtrLeft.getOutputFwd()) 
-    digitalWrite(PIN_MTR1_DIR_FWD, HIGH);   
-  else                        
-    digitalWrite(PIN_MTR1_DIR_FWD, LOW); 
+  digitalWrite(PIN_MTR1_DIR, mtrLeft.getOutputFwd() ? LOW : HIGH);
+  analogWrite(PIN_MTR1_PWM, mtrLeft.getOutputPWM());
 
-  if (mtrLeft.getOutputRev()) 
-    digitalWrite(PIN_MTR1_DIR_REV, HIGH);   
-  else                        
-    digitalWrite(PIN_MTR1_DIR_REV, LOW); 
-
-  if (mtrRight.getOutputFwd()) 
-    digitalWrite(PIN_MTR2_DIR_FWD, HIGH);   
-  else                         
-    digitalWrite(PIN_MTR2_DIR_FWD, LOW); 
-
-  if (mtrRight.getOutputRev()) 
-    digitalWrite(PIN_MTR2_DIR_REV, HIGH);   
-  else                         
-    digitalWrite(PIN_MTR2_DIR_REV, LOW); 
+  digitalWrite(PIN_MTR2_DIR, mtrRight.getOutputFwd() ? LOW : HIGH);
+  analogWrite(PIN_MTR2_PWM, mtrRight.getOutputPWM());
 }
 
 //======================================================================================
@@ -790,19 +796,17 @@ Serial.begin(115200);
 
   timerDelay = 0;
 
-  attachInterrupt(digitalPinToInterrupt(PIN_MTR1_ENCA), encoderIntLeft, RISING);
-  attachInterrupt(digitalPinToInterrupt(PIN_MTR2_ENCA), encoderIntRight, RISING);
+  setupEncoderInterrupts();
 
-  pinMode(PIN_MTR1_DIR_FWD,OUTPUT);
-  pinMode(PIN_MTR1_DIR_REV,OUTPUT);
-  pinMode(PIN_MTR2_DIR_FWD,OUTPUT);
-  pinMode(PIN_MTR2_DIR_REV,OUTPUT);
-  digitalWrite(PIN_MTR1_DIR_FWD, LOW);
-  digitalWrite(PIN_MTR1_DIR_REV, LOW);
-  digitalWrite(PIN_MTR2_DIR_FWD, LOW);
-  digitalWrite(PIN_MTR2_DIR_REV, LOW);
+  pinMode(PIN_MTR1_DIR,OUTPUT);
+  pinMode(PIN_MTR2_DIR,OUTPUT);
+  digitalWrite(PIN_MTR1_DIR, LOW);
+  digitalWrite(PIN_MTR2_DIR, LOW);
 
-  speedFwd = 200;   //changed
+  pinMode(STBY_PIN, OUTPUT);
+  digitalWrite(STBY_PIN, HIGH);
+
+speedFwd = 200;   //changed
   speedTurn = 100;
   
   //ADDED
@@ -953,9 +957,7 @@ void loop() {
       
     case VEHICLE_FORWARD :
       drive(1,newCmd);
-      if (mtrLeft.isStopped() || mtrRight.isStopped()) {
-        // setMotorOutputs();
-        
+      if (mtrLeft.isStopped() && mtrRight.isStopped()) {
         mtrRight.stop();
         mtrLeft.stop();
         cmdQueue.next();
@@ -963,9 +965,7 @@ void loop() {
       break;
     case VEHICLE_STRAIGHT :
       // stand_straight(newCmd);
-      if (mtrLeft.isStopped() || mtrRight.isStopped()) {
-        // setMotorOutputs();
-        
+      if (mtrLeft.isStopped() && mtrRight.isStopped()) {
         mtrRight.stop();
         mtrLeft.stop();
         cmdQueue.next();
@@ -974,22 +974,13 @@ void loop() {
     case VEHICLE_REVERSE :
       
        drive(-1,newCmd);
-      if (mtrLeft.isStopped() || mtrRight.isStopped()) {
-        // setMotorOutputs();
-        
+      if (mtrLeft.isStopped() && mtrRight.isStopped()) {
         mtrRight.stop();
         mtrLeft.stop();
         cmdQueue.next();
       }
       break;
     case VEHICLE_TURN_RIGHT :
-      // if (newCmd) {
-      //   distance = ENCODER_COUNTS_90_DEG;
-      //   speed = speedTurn;
-      //   mtrLeft.startMove(distance,speed);
-      //   mtrRight.startMove(distance,speed * -1);
-      //   setMotorOutputs();
-      // }
       turn(-87,newCmd);
       if (mtrLeft.isStopped() && mtrRight.isStopped()) {
         setMotorOutputs();
@@ -997,42 +988,6 @@ void loop() {
       }      
       break;
     case VEHICLE_TURN_LEFT :
-      // if (newCmd) {
-      //   mpu6050.update();
-      //   targetYaw  = mpu6050.getGyroAngleZ()+85;
-      //   angle = 0;
-      //   Serial.print("targetYaw: ");
-      //   Serial.println(targetYaw);
-      //   distance = ENCODER_COUNTS_90_DEG;
-      //   speed = speedTurn;
-      //   mtrLeft.startMove(distance,speed * -1);
-      //   mtrRight.startMove(distance,speed);
-      //   setMotorOutputs();
-      //   Serial.println("Turning");
-      //  // turn();
-      // }else
-      // {
-        
-      //   mpu6050.update();
-      //   float current  = mpu6050.getGyroAngleZ();
-      //   display.setCursor(0,1);
-      //   display.print(current);
-      //   display.setCursor(0,2);
-      //   display.print(targetYaw);
-
-      //   if(current < targetYaw)
-      //   {
-      //       //  distance = ENCODER_COUNTS_90_DEG;
-      //       //   mtrLeft.startMove(distance,speedTurn * -1);
-      //       //   mtrRight.startMove(distance,speedTurn);
-      //       //   setMotorOutputs();
-         
-      //   }else
-      //   {
-      //     mtrLeft.stop();
-      //     mtrRight.stop();
-      //   }
-      // }
       turn(86,newCmd);
       if (mtrLeft.isStopped() && mtrRight.isStopped()) {
         setMotorOutputs();
@@ -1079,48 +1034,44 @@ void loop() {
 
 void turn(float delta,int newCmd)
 {
-      //delta +ve left turn otherwise right turn
-      int direction =  delta/abs(delta);
-      if (newCmd) {
-        delay(1000);
-        //mpu6050.update();
-        //targetYaw  = mpu6050.getGyroAngleZ()+delta;
-        target  += delta;
+      // delta positive = left turn, negative = right turn
+      if (delta == 0.0f) return;
+      int direction = (delta > 0.0f) ? 1 : -1;
 
-        Serial.print("targetYaw: ");
-        Serial.println(target);
-        int distance = ENCODER_COUNTS_90_DEG;
-        
-        mtrLeft.startMove(distance,speedTurn * -1 * direction) ; //direction is +ve you want to make left turn hence reverse left mtr
-        mtrRight.startMove(distance,speedTurn * direction); //direction is -ve you want to make right turn hence reverse right mtr
+      if (newCmd) {
+        float current = mpu6050.getGyroAngleZ();
+        targetYaw = current + delta;
+        while (targetYaw > 180.0f) targetYaw -= 360.0f;
+        while (targetYaw <= -180.0f) targetYaw += 360.0f;
+
+        Serial.print("Turn start currentYaw = ");
+        Serial.print(current);
+        Serial.print(" targetYaw = ");
+        Serial.println(targetYaw);
+
+        int distance = ENCODER_COUNTS_90_DEG * 20; // sufficient encoder limit, MPU controls stop
+        mtrLeft.startMove(distance, speedTurn * -direction);
+        mtrRight.startMove(distance, speedTurn * direction);
         setMotorOutputs();
 
         display.setCursor(0,0);
         display.print("Turning            ");
         display.setCursor(0,1);
-        display.print("Target angle:" + String(target) + "  ");
+        display.print("Target angle:" + String(targetYaw) + "  ");
         Serial.println("Turning");
-       // turn();
-      }else
-      {
-        
-       float current = mpu6050.getGyroAngleZ();
-              
-        if(direction*current <  direction*target)
-        {
-           display.setCursor(0,2);
-           display.print("Curreent angle:" + String(current) + "  ");
+      } else {
+        float current = mpu6050.getGyroAngleZ();
+        float error = targetYaw - current;
+        while (error > 180.0f) error -= 360.0f;
+        while (error <= -180.0f) error += 360.0f;
 
-            //  distance = ENCODER_COUNTS_90_DEG;
-            //   mtrLeft.startMove(distance,speedTurn * -1);
-            //   mtrRight.startMove(distance,speedTurn);
-            //   setMotorOutputs();
-         
-        }else
-        {
+        if (fabs(error) > 2.0f) {
+           display.setCursor(0,2);
+           display.print("Current angle:" + String(current) + "  ");
+        } else {
           mtrLeft.stop();
           mtrRight.stop();
-          delay(1000);
+          setMotorOutputs();
         }
       }
 }
@@ -1147,73 +1098,16 @@ void drive(int direction, int newCmd) //1=fwd -1=rev
         rSpeed =csr.getSpeed(speedFwd);
         lSpeed = csl.getSpeed(speedFwd);
 
-        mtrLeft.startMove(distance,direction*lSpeed);
-        mtrRight.startMove(distance,direction*rSpeed);
+        mtrLeft.startMove(distance,direction*speedFwd);
+        mtrRight.startMove(distance,direction*speedFwd);
         setMotorOutputs(); 
         display.setCursor(0,1);
         display.print("Trget angle:" + String(target) + "  ");
         // adjust_target(direction * block_width);
-      }else
-      {
-
-        // if(usecElapsed < 1000)
-        // {
-        //   return;
-        // }
-        //long targetPulses = ((long) cmdQueue.getParameter1() * 500 * (long) ENCODER_COUNTS_PER_REV / (long) MM_PER_REV);;
-      
-
-        float Kp = 5.5, Ki = 0.0, Kd = 1.2;
-        float error = 0, lastError = 0, integral = 0;
-        int baseSpeed = speedFwd;
-
-        
-
-        while ((mtrLeft.getEnc() - leftStart < targetPulses) &&
-         (mtrRight.getEnc() - rightStart < targetPulses)) 
-        {
-            mpu6050.update();
-            float currentYaw = mpu6050.getAngleZ();
-
-            display.setCursor(0,2);
-        display.print("Current angle:" + String(currentYaw) + "  ");
-
-            error = currentYaw - target;
-            Serial.println("error =" + String(error));
-            integral += error;
-            integral = constrain(integral, -100, 100);
-            float derivative = error - lastError;
-            lastError = error;
-
-            float correction = (Kp * error + Ki * integral + Kd * derivative)*direction;
-
-            Serial.println("correction =" + String(correction));
-
-            int leftSpeed = baseSpeed + correction;
-            int rightSpeed = baseSpeed - correction;
-
-             Serial.println("right - =" + String(rightSpeed));
-              Serial.println("left - =" + String(leftSpeed));
-
-            leftSpeed = constrain(leftSpeed, 0, 255);
-            rightSpeed = constrain(rightSpeed, 0, 255);
-
-             Serial.println("right spd =" + String(rightSpeed));
-              Serial.println("left spd =" + String(leftSpeed));
-
-            //moveForward(leftSpeed, rightSpeed);
-            analogWrite(PIN_MTR2_PWM,csr.getSpeed(rightSpeed));
-            analogWrite(PIN_MTR1_PWM,csl.getSpeed(leftSpeed));
-
-            Serial.print("Yaw: "); Serial.print(currentYaw);
-            Serial.print(" | Corr: "); Serial.print(correction);
-            Serial.print(" | Left: "); Serial.print(mtrLeft.getEnc() - leftStart);
-            Serial.print(" | Right: "); Serial.println(mtrRight.getEnc() - rightStart);
-
-            //delay(50);
-        }
-
-
+      } else {
+        // Let the motion objects update the motor outputs in the main loop.
+        // Do not block here with a raw analogWrite loop.
+        return;
       }
 
 
@@ -1381,4 +1275,3 @@ float read_yaw(float current)
   
 
 // }
-

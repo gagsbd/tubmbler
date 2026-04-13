@@ -21,6 +21,18 @@
 
 float yaw;
 float targetYaw;
+float turnStartYaw;
+
+float normalizeAngle(float angle) {
+  while (angle > 180.0f) angle -= 360.0f;
+  while (angle < -180.0f) angle += 360.0f;
+  return angle;
+}
+
+float angleError(float from, float to) {
+  return normalizeAngle(to - from);
+}
+
 float x=0;
 float y=0;
 long reverse_enc = 0;
@@ -35,7 +47,7 @@ int right_turn_correction = 4;
 //int block_width = 500;
 
 #define MAX_COMMANDS    60
-#define ENCODER_COUNTS_90_DEG   266
+#define ENCODER_COUNTS_90_DEG   500
 #define ENC_PER_MM  0.25   // Calibrated: ~13665 counts for 500mm → ~27 counts/mm
 unsigned long usLast;
 unsigned long startTime =0;
@@ -692,17 +704,34 @@ void loop()
       break;
     case VEHICLE_TURN_RIGHT :
       if (newCmd) {
-        distance = ENCODER_COUNTS_90_DEG;
-        speed = speedTurn;
-        encoder_target = distance;
+        // Use MPU-based yaw to stop after ~90 degrees
+        turnStartYaw = yaw;
+        targetYaw = normalizeAngle(yaw -+ 90.0f);
+        encoder_target = 1e9;            // disable encoder-based stop during yaw turn
+        encoder_count_left_a = 0;
+        encoder_count_right_a = 0;
+        isTrapezoidalMotion = true;      // prevent updateStatus() from interfering
+        Serial.print(F("Turn right startYaw="));
+        Serial.print(turnStartYaw);
+        Serial.print(F(" targetYaw="));
+        Serial.println(targetYaw);
         turnRight();
       }
+      if (!hasStopped) {
+        float err = angleError(turnStartYaw, yaw);
+        if (err < 0) err = -err;
+        if (err >= 88.0f) {
+          carStop();
+          isTrapezoidalMotion = false;
+          Serial.print(F("Turn right complete yaw="));
+          Serial.println(yaw);
+        }
+      }
       if (hasStopped) {
-        //setMotorOutputs();
         Serial.println("Turn completed.");
         delay(1000);  // Pause to allow balance stabilization
         cmdQueue.next();
-      }      
+      }
       break;
     case VEHICLE_TURN_180 :  
       //turn(-180,newCmd);
@@ -714,11 +743,30 @@ void loop()
       break;
     case VEHICLE_TURN_LEFT :
      if (newCmd) {
-        carForwardTrapezoidal(-ENCODER_COUNTS_90_DEG, ENCODER_COUNTS_90_DEG, speedTurn);
+        turnStartYaw = yaw;
+        targetYaw = normalizeAngle(yaw + 90.0f);
+        encoder_target = 1e9;            // disable encoder-based stop during yaw turn
+        encoder_count_left_a = 0;
+        encoder_count_right_a = 0;
+        isTrapezoidalMotion = true;      // prevent updateStatus() from interfering
+        Serial.print(F("Turn left startYaw="));
+        Serial.print(turnStartYaw);
+        Serial.print(F(" targetYaw="));
+        Serial.println(targetYaw);
+        turnLeft();
       }
-      
+      if (!hasStopped) {
+        float err = angleError(turnStartYaw, yaw);
+        if (err < 0) err = -err;
+        if (err >= 88.0f) {
+          carStop();
+          isTrapezoidalMotion = false;
+          Serial.print(F("Turn left complete yaw="));
+          Serial.println(yaw);
+        }
+      }
       if (hasStopped) {
-        //setMotorOutputs();
+        Serial.println("Turn completed.");
         delay(1000);  // Pause to allow balance stabilization
         cmdQueue.next();
       }      
